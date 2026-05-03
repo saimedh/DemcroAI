@@ -1,15 +1,25 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+
+interface Citation {
+  index: number;
+  title: string;
+  url: string;
+  domain: string;
+  snippet?: string;
+}
 
 interface Message {
   id: string;
   role: "user" | "ai";
   content: string;
-  citations?: { index: number; title: string; url: string; date: string }[];
+  citations?: Citation[];
   confidence?: "high" | "medium";
   ts: Date;
+  flagged?: boolean;
+  streaming?: boolean;
 }
 
 const SAMPLES = [
@@ -21,152 +31,340 @@ const SAMPLES = [
   "Which parties are in the NDA coalition?",
 ];
 
-const RESPONSES: Record<string, { content: string; citations: { index: number; title: string; url: string; date: string }[] }> = {
-  default: {
-    content: "Based on publicly available records and data from the Election Commission of India (ECI), I can provide verified information on that topic.\n\nNote: I present all available perspectives here and never recommend any particular candidate or position. Ask a follow-up if you want to go deeper.",
-    citations: [
-      { index: 1, title: "Election Commission of India — eci.gov.in", url: "https://eci.gov.in", date: "2024-06-04" },
-      { index: 2, title: "PRS India Legislative Research", url: "https://prsindia.org", date: "2024-06-10" },
-    ],
-  },
-  loksabha: {
-    content: "2024 Lok Sabha Election Results (18th General Election) [1]\n\nThe National Democratic Alliance (NDA) led by BJP won a majority with 293 seats out of 543:\n\nNDA Alliance:\n· BJP — 240 seats (down from 303 in 2019) [1]\n· TDP — 16 seats\n· JD(U) — 12 seats\n\nINDIA Alliance — 234 seats:\n· INC — 99 seats (up from 52 in 2019) [2]\n· Samajwadi Party — 37 seats (Akhilesh Yadav's PDA strategy)\n· TMC — 29 seats (West Bengal)\n· DMK — 22 seats (Tamil Nadu)\n\nKey result: BJP won 240 seats — short of the 272-seat majority mark for the first time since 2014, making coalition partners essential. PM Modi sworn in for a third term on June 9, 2024 [3].\n\nBoth alliances' performances exceeded/fell short of most exit polls respectively.",
-    citations: [
-      { index: 1, title: "ECI General Election 2024 Results", url: "https://eci.gov.in", date: "2024-06-04" },
-      { index: 2, title: "INC Election Result — Party Website", url: "https://inc.in", date: "2024-06-05" },
-      { index: 3, title: "PM Modi Oath Ceremony — PIB", url: "https://pib.gov.in", date: "2024-06-09" },
-    ],
-  },
-  agriculture: {
-    content: "Agriculture Policy Comparison — BJP vs INC [1]\n\nBJP / Modi Government:\n· PM-KISAN: ₹6,000/year direct transfer to 11 crore farmers [1]\n· MSP hikes announced annually — ₹2,275/quintal for wheat (2024-25) [2]\n· Natural farming push — PM PRANAM scheme\n· No legal guarantee for MSP — a key opposition demand\n\nINC / Rahul Gandhi:\n· Legal MSP guarantee — central demand in 2024 manifesto [3]\n· Farm loan waiver where Congress governs (Telangana, Karnataka)\n· Opposes corporatisation of agriculture sector\n· Demands restoration of farm laws consultation process\n\nBoth sides: Agree on PM-KISAN expansion — disagree on MSP legal status and role of corporate capital in agriculture.",
-    citations: [
-      { index: 1, title: "PM-KISAN Official Portal — pmkisan.gov.in", url: "https://pmkisan.gov.in", date: "2024-03-01" },
-      { index: 2, title: "Cabinet MSP Decision 2024-25 — PIB", url: "https://pib.gov.in", date: "2024-06-19" },
-      { index: 3, title: "INC Manifesto 2024 — Agriculture Section", url: "#", date: "2024-04-05" },
-    ],
-  },
-  delhi: {
-    content: "Delhi Assembly Election — February 2025 [1]\n\nResult: BJP won 48 of 70 seats — returning to power in Delhi after 27 years.\n\nParty-wise results:\n· BJP — 48 seats (CM: Rekha Gupta) [1]\n· AAP — 22 seats (Arvind Kejriwal lost his own seat in New Delhi constituency) [2]\n· INC — 0 seats (complete washout for third consecutive time) [1]\n\nKey factors cited by analysts:\n· Anti-incumbency against AAP after Kejriwal's liquor policy controversy and arrest [3]\n· BJP's UJJWALA + welfare counter-narrative\n· INC–AAP INDIA bloc alliance breakdown in Delhi\n\nNote: This is a factual summary of public results. DemocrAI does not comment on electoral fairness or endorse any interpretation.",
-    citations: [
-      { index: 1, title: "Delhi Election Results — ECI", url: "https://eci.gov.in", date: "2025-02-08" },
-      { index: 2, title: "Kejriwal Concedes Defeat — The Hindu", url: "#", date: "2025-02-08" },
-      { index: 3, title: "Delhi Liquor Policy Case — Supreme Court", url: "#", date: "2024-09-13" },
-    ],
-  },
-  caste: {
-    content: "Caste Census — The Key Debate in Indian Politics [1]\n\nRahul Gandhi and INC demand:\n· A national Socio-Economic Caste Census (SECC) to update OBC population data [1]\n· Remove the 50% cap on reservations (currently imposed by Supreme Court) [2]\n· Argue that OBCs/SC/STs are under-represented at 50% combined reservation for ~70% of population\n\nBJP / Government position:\n· Conducted OBC sub-categorisation (Supreme Court allowed in Aug 2024) [3]\n· Have not committed to a full caste census at national level\n· Argue existing reservation framework is adequate\n\nBihar context: Bihar CM Nitish Kumar conducted a state-level caste survey in 2023 — revealed OBCs+EBCs = ~63% of Bihar's population.",
-    citations: [
-      { index: 1, title: "INC Caste Census Demand — Official Statement", url: "#", date: "2024-04-07" },
-      { index: 2, title: "50% Cap History — Indra Sawhney Case 1992", url: "#", date: "1992-11-16" },
-      { index: 3, title: "SC OBC Sub-categorisation Ruling", url: "#", date: "2024-08-01" },
-    ],
-  },
-  nda: {
-    content: "NDA (National Democratic Alliance) — Current Coalition Composition [1]\n\nKey NDA constituents after 2024 Lok Sabha:\n· BJP — 240 seats (Narendra Modi, PM)\n· TDP (Telugu Desam Party) — 16 seats (N. Chandrababu Naidu, AP CM) [2]\n· JD(U) (Janata Dal United) — 12 seats (Nitish Kumar, Bihar CM)\n· Shiv Sena (Shinde faction) — 7 seats\n· LJP (Ram Vilas) — 5 seats (Chirag Paswan, Union Minister)\n\nThe coalition is critical because BJP's 240 seats fall short of the 272-seat majority mark — TDP and JD(U) together provide the margin [1].\n\nBoth Chandrababu Naidu and Nitish Kumar have historically switched between BJP and opposition blocs — making coalition management a key political dynamic to watch.",
-    citations: [
-      { index: 1, title: "NDA Alliance Seats — ECI 2024", url: "https://eci.gov.in", date: "2024-06-04" },
-      { index: 2, title: "TDP Alliance with BJP — Press Trust of India", url: "#", date: "2024-03-21" },
-    ],
-  },
-};
-
-function getResponse(q: string) {
-  const l = q.toLowerCase();
-  if (l.includes("lok sabha") || l.includes("general election") || l.includes("2024 election") || l.includes("who won")) return RESPONSES.loksabha;
-  if (l.includes("agri") || l.includes("farm") || l.includes("msp") || l.includes("kisan")) return RESPONSES.agriculture;
-  if (l.includes("delhi")) return RESPONSES.delhi;
-  if (l.includes("caste") || l.includes("census") || l.includes("reservation") || l.includes("obc")) return RESPONSES.caste;
-  if (l.includes("nda") || l.includes("coalition") || l.includes("alliance") || l.includes("tdp") || l.includes("jdu")) return RESPONSES.nda;
-  return RESPONSES.default;
+function CitationCard({ citation }: { citation: Citation }) {
+  return (
+    <a
+      href={citation.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 14px",
+        background: "#141414",
+        border: "1px solid #2A2A2A",
+        borderRadius: 6,
+        textDecoration: "none",
+        transition: "border-color 0.15s, background 0.15s",
+        maxWidth: 320,
+        cursor: "pointer",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "#525252";
+        e.currentTarget.style.background = "#1A1A1A";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "#2A2A2A";
+        e.currentTarget.style.background = "#141414";
+      }}
+    >
+      {/* Favicon */}
+      <img
+        src={`https://www.google.com/s2/favicons?domain=${citation.domain}&sz=24`}
+        alt=""
+        width={16}
+        height={16}
+        style={{ borderRadius: 2, flexShrink: 0 }}
+        onError={(e) => { e.currentTarget.style.display = "none"; }}
+      />
+      <div style={{ overflow: "hidden" }}>
+        <div style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "#A3A3A3", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          [{citation.index}] {citation.title}
+        </div>
+        <div style={{ fontFamily: "var(--font-body)", fontSize: 11, color: "#525252" }}>{citation.domain}</div>
+      </div>
+    </a>
+  );
 }
 
-function formatContent(content: string) {
-  return content.split("\n").map((line, i) => {
-    if (line.startsWith("·")) return <div key={i} style={{ paddingLeft: 16, marginBottom: 4, fontFamily: "var(--font-body)", fontSize: 14, lineHeight: 1.6, color: "#0A0A0A" }}>{line}</div>;
-    if (line === "") return <div key={i} style={{ height: 8 }} />;
-    if (line.match(/^(BJP|INC|AAP|NDA|INDIA Alliance|Rahul|Modi|Both sides|Both alliances|Both candidates|Note:|Key result:|Key factors)/)) {
-      return <div key={i} style={{ fontWeight: 700, color: "#0A0A0A", marginTop: 8, marginBottom: 4, fontFamily: "var(--font-body)", fontSize: 14 }}>{line}</div>;
-    }
-    if (line.startsWith("NDA Alliance") || line.startsWith("Bihar context")) {
-      return <div key={i} style={{ borderLeft: "4px solid #EF4444", paddingLeft: 14, marginTop: 12, fontStyle: "italic", color: "#525252", fontSize: 14, fontFamily: "var(--font-body)", lineHeight: 1.6 }}>{line}</div>;
-    }
-    return <div key={i} style={{ fontFamily: "var(--font-body)", fontSize: 14, lineHeight: 1.6, color: "#0A0A0A" }}>{line}</div>;
-  });
-}
+function FlagModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (reason: string) => void }) {
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-
-export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([{
-    id: "welcome",
-    role: "ai",
-    content: "I am DemocrAI — your nonpartisan election co-pilot.\n\nI can help you understand candidate positions, decode ballot measures, and find voting logistics. Every answer is source-cited. I never recommend candidates.\n\nWhat would you like to know?",
-    confidence: "high",
-    ts: new Date(),
-  }]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-
-  const send = async (text: string) => {
-    if (!text.trim() || loading) return;
-    setMessages(m => [...m, { id: `u-${Date.now()}`, role: "user", content: text, ts: new Date() }]);
-    setInput("");
-    setLoading(true);
-    await new Promise(r => setTimeout(r, 900 + Math.random() * 700));
-    const res = getResponse(text);
-    setMessages(m => [...m, { id: `ai-${Date.now()}`, role: "ai", content: res.content, citations: res.citations, confidence: "high", ts: new Date() }]);
-    setLoading(false);
+  const handleSubmit = async () => {
+    if (!reason.trim()) return;
+    setSubmitting(true);
+    await onSubmit(reason);
+    setSubmitting(false);
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#FAFAFA", display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex",
+        alignItems: "center", justifyContent: "center", zIndex: 1000, backdropFilter: "blur(4px)",
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: "#141414", border: "1px solid #2A2A2A", padding: 32, maxWidth: 480, width: "90%", borderRadius: 8 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 style={{ fontFamily: "var(--font-display)", fontSize: 22, color: "#FAFAFA", marginBottom: 8 }}>🚩 Flag This Answer</h3>
+        <p style={{ fontFamily: "var(--font-body)", fontSize: 14, color: "#737373", marginBottom: 20, lineHeight: 1.6 }}>
+          Help us improve. Flagged answers are reviewed by a human moderator within 48 hours.
+        </p>
+        <textarea
+          placeholder="Describe the issue (e.g. inaccurate, biased, outdated)..."
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={4}
+          style={{
+            width: "100%", boxSizing: "border-box", background: "#0A0A0A", border: "1px solid #2A2A2A",
+            color: "#FAFAFA", fontFamily: "var(--font-body)", fontSize: 14, padding: 14, resize: "vertical",
+            borderRadius: 4, outline: "none", marginBottom: 16,
+          }}
+        />
+        <div style={{ display: "flex", gap: 12 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "12px", background: "none", border: "1px solid #2A2A2A", color: "#737373", fontFamily: "var(--font-body)", fontSize: 14, cursor: "pointer", borderRadius: 4 }}>
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!reason.trim() || submitting}
+            style={{ flex: 2, padding: "12px", background: reason.trim() ? "#EF4444" : "#2A2A2A", border: "none", color: "#FAFAFA", fontFamily: "var(--font-display)", fontSize: 14, cursor: reason.trim() ? "pointer" : "not-allowed", borderRadius: 4, letterSpacing: "0.05em" }}
+          >
+            {submitting ? "Submitting…" : "Submit Report"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ChatPage() {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: "welcome",
+      role: "ai",
+      content:
+        "I am DemocrAI — your nonpartisan election co-pilot, powered by Gemini with live Google Search grounding.\n\nEvery answer cites real sources. I never recommend candidates.\n\nWhat would you like to know?",
+      confidence: "high",
+      ts: new Date(),
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [flagTarget, setFlagTarget] = useState<string | null>(null);
+  const [flagSuccess, setFlagSuccess] = useState<string | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const sessionId = useRef(`session-${Date.now()}`);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const send = useCallback(
+    async (text: string) => {
+      if (!text.trim() || loading) return;
+
+      const userMsg: Message = {
+        id: `u-${Date.now()}`,
+        role: "user",
+        content: text,
+        ts: new Date(),
+      };
+
+      setMessages((m) => [...m, userMsg]);
+      setInput("");
+      setLoading(true);
+
+      // Build history for the API
+      const history = [...messages, userMsg]
+        .filter((m) => m.id !== "welcome")
+        .map((m) => ({
+          role: m.role === "ai" ? "model" : "user",
+          parts: [{ text: m.content }],
+        }));
+
+      const aiMsgId = `ai-${Date.now()}`;
+      // Add streaming placeholder
+      setMessages((m) => [
+        ...m,
+        { id: aiMsgId, role: "ai", content: "", ts: new Date(), streaming: true },
+      ]);
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: history, question: text }),
+        });
+
+        if (!res.ok) {
+          throw new Error(`API error: ${res.status}`);
+        }
+
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let fullText = "";
+        let citations: Citation[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const payload = JSON.parse(line.slice(6));
+              if (payload.type === "delta") {
+                fullText += payload.text;
+                setMessages((m) =>
+                  m.map((msg) =>
+                    msg.id === aiMsgId
+                      ? { ...msg, content: fullText, streaming: true }
+                      : msg
+                  )
+                );
+              } else if (payload.type === "citations") {
+                citations = payload.citations;
+                setMessages((m) =>
+                  m.map((msg) =>
+                    msg.id === aiMsgId
+                      ? { ...msg, citations, streaming: true }
+                      : msg
+                  )
+                );
+              } else if (payload.type === "done") {
+                setMessages((m) =>
+                  m.map((msg) =>
+                    msg.id === aiMsgId
+                      ? { ...msg, streaming: false, confidence: "high" }
+                      : msg
+                  )
+                );
+              } else if (payload.type === "error") {
+                throw new Error(payload.message);
+              }
+            } catch {
+              // skip malformed event
+            }
+          }
+        }
+
+        // Finalize
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === aiMsgId
+              ? { ...msg, content: fullText || "No response received.", streaming: false, citations, confidence: "high" }
+              : msg
+          )
+        );
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "Something went wrong";
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === aiMsgId
+              ? {
+                  ...msg,
+                  content: `⚠️ ${errMsg}\n\nPlease ensure GEMINI_API_KEY is configured in your .env.local file.`,
+                  streaming: false,
+                }
+              : msg
+          )
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loading, messages]
+  );
+
+  const handleFlag = async (reason: string) => {
+    if (!flagTarget) return;
+    const msg = messages.find((m) => m.id === flagTarget);
+    try {
+      const res = await fetch("/api/flag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messageContent: msg?.content || "",
+          messageIndex: messages.findIndex((m) => m.id === flagTarget),
+          sessionId: sessionId.current,
+          reason,
+        }),
+      });
+      const data = await res.json();
+      setMessages((m) =>
+        m.map((msg) => (msg.id === flagTarget ? { ...msg, flagged: true } : msg))
+      );
+      setFlagSuccess(data.flagId);
+    } catch {
+      setFlagSuccess("error");
+    }
+    setFlagTarget(null);
+    setTimeout(() => setFlagSuccess(null), 4000);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0A0A0A", display: "flex", flexDirection: "column" }}>
       <Navbar />
 
       {/* Header */}
-      <div style={{ borderBottom: "2px solid #0A0A0A", background: "#F5F5F5" }}>
-        <div className="container" style={{ padding: "24px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+      <div style={{ borderBottom: "1px solid #1A1A1A", background: "#0D0D0D" }}>
+        <div className="container" style={{ padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
-            <span className="rubric" style={{ display: "block", marginBottom: 8 }}>AI Co-Pilot</span>
-            <h1 className="type-headline" style={{ fontSize: 28 }}>Election Research Assistant</h1>
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <span className="chip-status chip-success">⚖ Nonpartisan</span>
-              <span className="chip-status" style={{ background: "#F5F5F5", color: "#525252", borderColor: "#D4D4D4" }}>📚 Source-cited</span>
+            <span style={{ display: "block", fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "#525252", marginBottom: 6 }}>
+              AI Co-Pilot
+            </span>
+            <h1 style={{ fontFamily: "var(--font-display)", fontSize: 24, color: "#FAFAFA", lineHeight: 1.1, marginBottom: 8 }}>
+              Election Research Assistant
+            </h1>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)", color: "#22C55E", padding: "4px 10px", borderRadius: 999, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700 }}>
+                ⚖ Nonpartisan
+              </span>
+              <span style={{ background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)", color: "#60A5FA", padding: "4px 10px", borderRadius: 999, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700 }}>
+                🔍 Google Search Grounded
+              </span>
+              <span style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.3)", color: "#A78BFA", padding: "4px 10px", borderRadius: 999, fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700 }}>
+                ⚡ Gemini 1.5 Pro
+              </span>
             </div>
           </div>
-          <div style={{ border: "2px solid #E5E5E5", padding: "14px 20px", maxWidth: 320 }}>
-            <p style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "#525252", lineHeight: 1.6 }}>
-              <strong style={{ color: "#0A0A0A" }}>Transparency:</strong> All responses are grounded in verifiable public sources. DemocrAI never recommends candidates or votes.
+          <div style={{ background: "#141414", border: "1px solid #2A2A2A", padding: "12px 18px", borderRadius: 6, maxWidth: 300 }}>
+            <p style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "#737373", lineHeight: 1.6 }}>
+              <strong style={{ color: "#A3A3A3" }}>Transparency:</strong> All responses cite live web sources via Google Search. DemocrAI never recommends candidates or votes.
             </p>
           </div>
         </div>
       </div>
 
-      <div className="container" style={{ flex: 1, padding: "0 24px", display: "grid", gridTemplateColumns: "220px 1fr", gap: 0 }}>
+      <div className="container" style={{ flex: 1, padding: "0 24px", display: "grid", gridTemplateColumns: "200px 1fr", gap: 0 }}>
         {/* Sidebar */}
-        <div style={{ borderRight: "1px solid #E5E5E5", padding: "32px 24px 32px 0" }}>
-          <div style={{ fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "#A3A3A3", marginBottom: 12 }}>
+        <div style={{ borderRight: "1px solid #1A1A1A", padding: "28px 20px 28px 0" }}>
+          <div style={{ fontFamily: "var(--font-body)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "#525252", marginBottom: 10 }}>
             Try asking
           </div>
           {SAMPLES.map((q, i) => (
-            <button key={i} onClick={() => send(q)} style={{
-              display: "block",
-              width: "100%",
-              textAlign: "left",
-              padding: "10px 12px",
-              marginBottom: 6,
-              border: "1px solid #E5E5E5",
-              background: "none",
-              cursor: "pointer",
-              fontFamily: "var(--font-body)",
-              fontSize: 13,
-              color: "#525252",
-              lineHeight: 1.4,
-              transition: "all 0.15s",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#F5F5F5"; (e.currentTarget as HTMLElement).style.color = "#0A0A0A"; (e.currentTarget as HTMLElement).style.borderColor = "#0A0A0A"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; (e.currentTarget as HTMLElement).style.color = "#525252"; (e.currentTarget as HTMLElement).style.borderColor = "#E5E5E5"; }}
+            <button
+              key={i}
+              onClick={() => send(q)}
+              disabled={loading}
+              style={{
+                display: "block", width: "100%", textAlign: "left", padding: "9px 12px",
+                marginBottom: 5, border: "1px solid #1A1A1A", background: "none", cursor: loading ? "not-allowed" : "pointer",
+                fontFamily: "var(--font-body)", fontSize: 12, color: "#525252", lineHeight: 1.4, transition: "all 0.15s", borderRadius: 4,
+              }}
+              onMouseEnter={(e) => {
+                if (!loading) {
+                  e.currentTarget.style.background = "#141414";
+                  e.currentTarget.style.color = "#A3A3A3";
+                  e.currentTarget.style.borderColor = "#2A2A2A";
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "none";
+                e.currentTarget.style.color = "#525252";
+                e.currentTarget.style.borderColor = "#1A1A1A";
+              }}
             >
               {q}
             </button>
@@ -174,90 +372,160 @@ export default function ChatPage() {
         </div>
 
         {/* Chat area */}
-        <div style={{ display: "flex", flexDirection: "column", paddingLeft: 48, paddingTop: 32, paddingBottom: 32 }}>
+        <div style={{ display: "flex", flexDirection: "column", paddingLeft: 40, paddingTop: 28, paddingBottom: 28 }}>
           {/* Messages */}
-          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20, minHeight: 400, maxHeight: "calc(100vh - 380px)", paddingBottom: 20 }}>
-            {messages.map(msg => (
-              <div key={msg.id} style={{ display: "flex", gap: 16, flexDirection: msg.role === "user" ? "row-reverse" : "row", alignItems: "flex-start" }}>
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 24, minHeight: 400, maxHeight: "calc(100vh - 360px)", paddingBottom: 16 }}>
+            {messages.map((msg) => (
+              <div key={msg.id} style={{ display: "flex", gap: 14, flexDirection: msg.role === "user" ? "row-reverse" : "row", alignItems: "flex-start" }}>
                 {/* Avatar */}
                 <div style={{
-                  width: 36,
-                  height: 36,
-                  background: msg.role === "ai" ? "#0A0A0A" : "#E5E5E5",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontFamily: "var(--font-display)",
-                  fontSize: 12,
-                  color: msg.role === "ai" ? "#FAFAFA" : "#0A0A0A",
-                  flexShrink: 0,
+                  width: 34, height: 34, background: msg.role === "ai" ? "linear-gradient(135deg, #EF4444, #F97316)" : "#1A1A1A",
+                  border: "1px solid " + (msg.role === "ai" ? "transparent" : "#2A2A2A"),
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: "var(--font-display)", fontSize: 10, color: "#FAFAFA", flexShrink: 0, borderRadius: 4,
                 }}>
                   {msg.role === "ai" ? "AI" : "YOU"}
                 </div>
 
-                <div style={{ maxWidth: "80%", flex: 1 }}>
+                <div style={{ maxWidth: "82%", flex: 1 }}>
                   {msg.role === "ai" && (
-                    <div style={{ display: "flex", gap: 10, marginBottom: 8, alignItems: "center" }}>
-                      <span style={{ fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#0A0A0A" }}>DemocrAI</span>
-                      {msg.confidence === "high" && <span className="chip-status chip-success" style={{ fontSize: 10, padding: "2px 8px" }}>✓ Verified</span>}
+                    <div style={{ display: "flex", gap: 10, marginBottom: 6, alignItems: "center" }}>
+                      <span style={{ fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 700, color: "#A3A3A3" }}>DemocrAI</span>
+                      {msg.confidence === "high" && !msg.streaming && (
+                        <span style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)", color: "#22C55E", padding: "2px 8px", borderRadius: 999, fontSize: 10, fontFamily: "var(--font-body)", fontWeight: 700 }}>
+                          ✓ Grounded
+                        </span>
+                      )}
+                      {msg.streaming && (
+                        <span style={{ color: "#F97316", fontSize: 10, fontFamily: "var(--font-body)", fontWeight: 700 }}>● Streaming…</span>
+                      )}
                     </div>
                   )}
 
-                  <div className={msg.role === "user" ? "chat-user" : "chat-ai"}>
-                    {msg.role === "ai" ? formatContent(msg.content) : (
-                      <span>{msg.content}</span>
+                  <div style={{
+                    background: msg.role === "user" ? "#1A1A1A" : "#141414",
+                    border: `1px solid ${msg.role === "user" ? "#2A2A2A" : "#1E1E1E"}`,
+                    padding: "14px 18px", borderRadius: 8,
+                    fontFamily: "var(--font-body)", fontSize: 14, color: "#D4D4D4", lineHeight: 1.7,
+                    whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  }}>
+                    {msg.content}
+                    {msg.streaming && (
+                      <span style={{ display: "inline-block", width: 2, height: 14, background: "#EF4444", marginLeft: 2, animation: "blink 1s step-start infinite", verticalAlign: "middle" }} />
                     )}
                   </div>
 
-                  {msg.citations && msg.citations.length > 0 && (
-                    <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {msg.citations.map(c => (
-                        <button key={c.index} className="cite" title={`${c.title} — ${c.date}`}>
-                          [{c.index}] {c.title.slice(0, 28)}{c.title.length > 28 ? "…" : ""}
-                        </button>
-                      ))}
+                  {/* Citation Cards */}
+                  {msg.citations && msg.citations.length > 0 && !msg.streaming && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontFamily: "var(--font-body)", fontSize: 11, color: "#525252", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+                        Sources
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {msg.citations.slice(0, 6).map((c) => (
+                          <CitationCard key={c.index} citation={c} />
+                        ))}
+                      </div>
                     </div>
                   )}
-                  <div style={{ color: "#A3A3A3", fontSize: 11, fontFamily: "var(--font-body)", marginTop: 6 }}>
-                    {msg.ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+
+                  {/* Footer row */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+                    <span style={{ color: "#525252", fontSize: 11, fontFamily: "var(--font-body)" }}>
+                      {msg.ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    {msg.role === "ai" && !msg.streaming && (
+                      msg.flagged ? (
+                        <span style={{ fontSize: 11, fontFamily: "var(--font-body)", color: "#737373" }}>🚩 Reported</span>
+                      ) : (
+                        <button
+                          onClick={() => setFlagTarget(msg.id)}
+                          style={{
+                            background: "none", border: "none", color: "#525252", fontSize: 11,
+                            fontFamily: "var(--font-body)", cursor: "pointer", padding: 0,
+                            transition: "color 0.15s",
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = "#EF4444"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = "#525252"; }}
+                        >
+                          🚩 Flag this answer
+                        </button>
+                      )
+                    )}
                   </div>
                 </div>
               </div>
             ))}
 
-            {loading && (
-              <div style={{ display: "flex", gap: 16 }}>
-                <div style={{ width: 36, height: 36, background: "#0A0A0A", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--font-display)", fontSize: 12, color: "#FAFAFA", flexShrink: 0 }}>AI</div>
-                <div className="chat-ai loading-shimmer" style={{ width: 180, height: 48 }} />
+            {loading && messages[messages.length - 1]?.role !== "ai" && (
+              <div style={{ display: "flex", gap: 14 }}>
+                <div style={{ width: 34, height: 34, background: "linear-gradient(135deg, #EF4444, #F97316)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--font-display)", fontSize: 10, color: "#FAFAFA", borderRadius: 4 }}>AI</div>
+                <div style={{ background: "#141414", border: "1px solid #1E1E1E", padding: "14px 18px", borderRadius: 8, width: 160, height: 48 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", height: "100%" }}>
+                    {[0, 0.2, 0.4].map((d) => (
+                      <div key={d} style={{ width: 8, height: 8, background: "#EF4444", borderRadius: "50%", animation: `bounce 1.2s ease-in-out ${d}s infinite` }} />
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
             <div ref={endRef} />
           </div>
 
           {/* Input */}
-          <div style={{ borderTop: "2px solid #0A0A0A", paddingTop: 20 }}>
+          <div style={{ borderTop: "1px solid #1A1A1A", paddingTop: 18 }}>
+            {flagSuccess && flagSuccess !== "error" && (
+              <div style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)", color: "#22C55E", padding: "10px 16px", borderRadius: 6, fontFamily: "var(--font-body)", fontSize: 13, marginBottom: 12 }}>
+                ✓ Report submitted (ID: {flagSuccess.slice(0, 12)}). Thank you — a moderator will review this within 48h.
+              </div>
+            )}
             <div style={{ display: "flex", gap: 0 }}>
               <input
                 type="text"
                 placeholder="Ask about candidates, ballot measures, voting logistics..."
                 value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && send(input)}
-                className="input"
-                style={{ flex: 1, borderRight: "none", height: 48 }}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && send(input)}
+                style={{
+                  flex: 1, height: 50, padding: "0 16px", background: "#141414", border: "1px solid #2A2A2A",
+                  borderRight: "none", color: "#FAFAFA", fontFamily: "var(--font-body)", fontSize: 14, outline: "none",
+                  borderRadius: "4px 0 0 4px",
+                }}
               />
-              <button onClick={() => send(input)} disabled={loading || !input.trim()} className="btn btn-primary" style={{ height: 48, flexShrink: 0 }}>
+              <button
+                onClick={() => send(input)}
+                disabled={loading || !input.trim()}
+                style={{
+                  height: 50, padding: "0 24px", background: loading || !input.trim() ? "#1A1A1A" : "linear-gradient(135deg, #EF4444, #F97316)",
+                  border: "1px solid " + (loading || !input.trim() ? "#2A2A2A" : "transparent"),
+                  color: "#FAFAFA", fontFamily: "var(--font-display)", fontSize: 14, cursor: loading || !input.trim() ? "not-allowed" : "pointer",
+                  flexShrink: 0, letterSpacing: "0.05em", borderRadius: "0 4px 4px 0", transition: "all 0.2s",
+                }}
+              >
                 Send →
               </button>
             </div>
-            <p style={{ color: "#A3A3A3", fontSize: 12, fontFamily: "var(--font-body)", marginTop: 8, fontStyle: "italic" }}>
-              DemocrAI is nonpartisan and never recommends candidates. All responses are source-cited.
+            <p style={{ color: "#525252", fontSize: 12, fontFamily: "var(--font-body)", marginTop: 8, fontStyle: "italic" }}>
+              Powered by Gemini 1.5 Pro · Google Search grounded · DemocrAI never recommends candidates
             </p>
           </div>
         </div>
       </div>
 
       <Footer />
+
+      {/* Flag Modal */}
+      {flagTarget && (
+        <FlagModal
+          onClose={() => setFlagTarget(null)}
+          onSubmit={handleFlag}
+        />
+      )}
+
+      <style>{`
+        @keyframes blink { 0%, 100% { opacity: 1 } 50% { opacity: 0 } }
+        @keyframes bounce { 0%, 60%, 100% { transform: translateY(0) } 30% { transform: translateY(-6px) } }
+      `}</style>
     </div>
   );
 }
